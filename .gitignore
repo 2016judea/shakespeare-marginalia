@@ -1,0 +1,7 @@
+work/
+*.pdf
+*.html
+!examples/**/*.html
+__pycache__/
+*.pyc
+.DS_Store
