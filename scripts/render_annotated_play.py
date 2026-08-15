@@ -125,6 +125,9 @@ def main():
     ap.add_argument("--sealts", default="460", help="Sealts number of the physical volume (460 for all 7 Dramatic Works vols)")
     ap.add_argument("--style", choices=STYLES.keys(), default="antiquarian")
     ap.add_argument("--overrides", help="JSON file of manual {\"page,y\": line_index} corrections")
+    ap.add_argument("--annotators", help="JSON file of ADDITIONAL annotators (Milton, Keats, ...) whose "
+                                          "marks are hand-located rather than XML-sourced. See "
+                                          "examples/king-lear/annotators.json")
     ap.add_argument("--appendix-pages", nargs="*", type=int, default=[],
                      help="page numbers to treat as trailing editorial notes, not in-text anchors")
     ap.add_argument("--out", required=True)
@@ -212,7 +215,46 @@ def main():
 
     line_visual = {}
     line_sidenote = {}
+    line_authors = {}   # line index -> ordered list of annotator keys who marked it
     appendix_notes = []
+
+    def claim(idx, key):
+        """Record that `key` marked line `idx`, so the line can be tagged with whose mark it is."""
+        who = line_authors.setdefault(idx, [])
+        if key not in who:
+            who.append(key)
+
+    # ---------- additional annotators ----------
+    # Melville is the only reader with a structured transcription database behind him.
+    # Everyone else's marks are located by hand and anchored here by the TEXT of the
+    # line they sit against, then resolved with the same fuzzy matcher. Anchoring by
+    # text rather than by line index is deliberate: indices move whenever the Folger
+    # text is re-fetched, and a hand-typed index that is off by N fails silently.
+    def find_line(anchor):
+        """Best whole-text match for an anchor string. Returns (index, score)."""
+        target = norm(anchor)
+        best_score, best_i = -1, None
+        for start in range(len(play_lines)):
+            for span in range(1, 4):
+                acc = " ".join(norm_lines[start:start + span])
+                if not acc:
+                    continue
+                ratio = difflib.SequenceMatcher(None, target, acc).ratio()
+                if ratio > best_score:
+                    best_score, best_i = ratio, start
+        return best_i, best_score
+
+    extra = []
+    if args.annotators:
+        extra = json.load(open(args.annotators, encoding="utf-8"))["annotators"]
+        for a in extra:
+            for mk in a["marks"]:
+                idx, score = find_line(mk["anchor"])
+                mk["_line"], mk["_score"] = idx, score
+                flag = "" if score >= 0.75 else "   <-- WEAK, check the rendered page by hand"
+                print(f"{a['key']} score={score:.2f} line={idx:<5} "
+                      f"anchor='{mk['anchor'][:48]}'{flag}")
+            print(f"Loaded {len(a['marks'])} {a['name']} marks")
 
     for e, m in zip(entries, matches):
         key = (e["page"], e["y"])
@@ -226,8 +268,10 @@ def main():
             if idx is None:
                 continue
             idx = bump_past_bare_speaker(idx)
-            line_sidenote.setdefault(idx, []).append(e)
+            line_sidenote.setdefault(idx, []).append(
+                {"tag": "HM", "color": None, "text": e["text"], "citation": None})
             line_visual.setdefault(idx, set()).add("annotation")
+            claim(idx, "HM")
         else:
             if key in overrides:
                 start_i, span_len = overrides[key], 1
@@ -239,27 +283,136 @@ def main():
                 li = start_i + offset
                 if li < len(play_lines):
                     line_visual.setdefault(li, set()).add(e["type"])
+                    claim(li, "HM")
+
+    # Fold the hand-located annotators onto the same line maps Melville's marks use,
+    # so from here down the renderer doesn't care where a mark came from.
+    for a in extra:
+        for mk in a["marks"]:
+            idx = mk["_line"]
+            if idx is None:
+                continue
+            idx = bump_past_bare_speaker(idx)
+            line_visual.setdefault(idx, set()).add(mk["type"])
+            claim(idx, a["key"])
+            if mk.get("note"):
+                line_sidenote.setdefault(idx, []).append({
+                    "tag": a["key"], "color": a["color"],
+                    "text": mk["note"], "citation": mk.get("citation"),
+                })
 
     # ---------- build HTML ----------
     def note_html(e, offset_em=0):
-        style = f' style="top:{offset_em}em;"' if offset_em else ""
-        return f'<div class="sidenote"{style}><span class="tag">HM</span> &ldquo;{html.escape(e["text"])}&rdquo;</div>'
+        bits = [f"top:{offset_em}em;"] if offset_em else []
+        if e.get("color"):
+            bits.append(f'color:{e["color"]};')
+        style = f' style="{"".join(bits)}"' if bits else ""
+        tag_style = f' style="color:{e["color"]};border-color:{e["color"]};"' if e.get("color") else ""
+        # Melville's marks are verbatim transcriptions of what he wrote, so they are
+        # quoted. Everyone else's are editorial descriptions of a mark, so they are not.
+        body = (f'&ldquo;{html.escape(e["text"])}&rdquo;' if e["tag"] == "HM"
+                else html.escape(e["text"]))
+        cite = f' <span class="cite">({html.escape(e["citation"])})</span>' if e.get("citation") else ""
+        return (f'<div class="sidenote"{style}>'
+                f'<span class="tag"{tag_style}>{e["tag"]}</span> {body}{cite}</div>')
+
+    def est_note_height_em(e):
+        """Rough rendered height of a sidenote, in em, for collision carry-over."""
+        chars = len(e["text"]) + (len(e.get("citation") or "") + 3)
+        return max(2.6, (chars / 42.0) * 1.4 + 0.8)
 
     act_re = re.compile(r"^ACT (\d+)$")
     scene_re = re.compile(r"^Scene (\d+)$")
 
-    out = [f"""<!doctype html><html><head><meta charset="utf-8"><title>{html.escape(args.title)} — annotated with Melville's marginalia</title>
+    # ---- title page ----
+    readers = [("HM", "Herman Melville", None)] + [(a["key"], a["name"], a["color"]) for a in extra]
+    author_color = {a["key"]: a["color"] for a in extra}   # HM keeps the style's own accent
+    names_block = "<br>".join(n.upper() for _, n, _ in readers)
+    subtitle = "with the marginalia of" if len(readers) == 1 else "with the marginalia of"
+
+    if extra:
+        key_line = " &nbsp; ".join(
+            f'<span style="font-weight:bold;{"color:" + c + ";" if c else ""}">{k}</span> &middot; {html.escape(n)}'
+            for k, n, c in readers)
+        intro = (f'<div class="readerkey">{key_line}</div>'
+                 f'<div class="readerintro">'
+                 f'{len(readers)} readers, two centuries apart, each left a mark on this play. '
+                 f'This edition reads {html.escape(args.title)} once, straight through, with every hand '
+                 f'visible at the lines that held them &mdash; each tagged so you always know whose.</div>')
+        blurbs = ('<div class="blurbs">'
+                  '<p><b>HM</b> &mdash; Herman Melville marked his own 1837 <i>Dramatic Works</i> '
+                  'obsessively while drafting <i>Moby-Dick</i>; the volume survives at Harvard\'s '
+                  'Houghton Library, transcribed in full by Melville\'s Marginalia Online.</p>'
+                  + "".join(f'<p><b>{a["key"]}</b> &mdash; {html.escape(a["blurb"])}</p>' for a in extra)
+                  + '</div>')
+        extra_sources = "".join(
+            f'{html.escape(a["name"])}: {html.escape(a["source"])}<br><br>' for a in extra)
+        caveat = ("Assembled as a private reading copy, not a scholarly edition. Melville's marks are "
+                  "exhaustively transcribed by his editors; the others are a first pass, not a complete "
+                  "paleographic inventory. Footnote placement is approximate where a reader's own edition "
+                  "departs in wording from the modern edited text.")
+        # A multi-reader title page carries a key, an intro and a blurb per reader, which
+        # is far more than the single-reader page was spaced for -- without this it pushes
+        # the credit block onto a second page.
+        titlepage_fit = (".titlepage .sub { margin-bottom: 0; }"
+                         ".editionnote { page-break-after: always; padding-top: 0.35in; text-align:center; }"
+                         # .credit is styled per-style as `.titlepage .credit`, which no longer
+                         # matches once the block moves onto its own page -- restate it here.
+                         ".editionnote .credit { font-size:9pt; color:#555; max-width:4.6in; margin:1.6em auto 0;"
+                         " line-height:1.5; text-align:left; border-top:1px solid #999; padding-top:0.9em; }")
+    else:
+        intro, blurbs, extra_sources, titlepage_fit = "", "", "", ""
+        caveat = ("Assembled as a private reading copy. Not a scholarly edition &mdash; footnote placement "
+                  "is approximate where Melville's 1837 text departs in wording from the modern edited text.")
+
+    out = [f"""<!doctype html><html><head><meta charset="utf-8"><title>{html.escape(args.title)} — annotated</title>
 <style>
 {STYLES[args.style].strip()}
+.readerkey {{ font-size: 11pt; margin: 0.4em 0 1.6em; letter-spacing:0.5px; }}
+.readerintro {{ font-size: 10.5pt; font-style:italic; color:#444; max-width:4.6in; margin:0 auto 2em; line-height:1.6; text-align:left; }}
+.blurbs {{ font-size: 9.5pt; color:#444; max-width:4.6in; margin:0 auto; text-align:left; line-height:1.55; }}
+.blurbs p {{ margin: 0 0 0.7em; }}
+.sidenote .cite {{ font-style:normal; font-size:7.5pt; opacity:0.75; white-space:nowrap; }}
+.linetag {{ font-family:'Helvetica Neue', Arial, sans-serif; font-size:6.5pt; font-weight:bold; letter-spacing:0.5px; vertical-align:0.35em; margin-left:0.35em; opacity:0.8; }}
+.frontispiece {{ page-break-after: always; text-align:center; padding-top:1.2in; }}
+.frontispiece .caption {{ font-size:9.5pt; font-style:italic; color:#666; margin-bottom:2.2em; }}
+.frontispiece h2 {{ font-size:14pt; font-weight:normal; font-style:italic; margin-bottom:1.4em; }}
+.frontispiece .verse {{ display:inline-block; text-align:left; font-size:11.5pt; line-height:2.0; }}
+.notesheading {{ font-size:15pt; text-align:center; page-break-before: always; letter-spacing:2px; font-variant:small-caps; margin-bottom:0.4em; }}
+.noteslist {{ width:4.4in; font-size:9.5pt; line-height:1.55; }}
+.noteslist p {{ margin:0 0 0.7em; }}
+.noteslist .tag {{ font-weight:bold; margin-right:4px; }}
+{titlepage_fit}
 </style></head><body>
 <div class="titlepage">
 <h1>{html.escape(args.title).upper()}</h1>
-<div class="sub">by William Shakespeare<br><br>with the marginalia of<br>HERMAN MELVILLE</div>
+<div class="sub">by William Shakespeare<br><br>{subtitle}<br>{names_block}</div>
+{'</div><div class="editionnote">' if extra else ''}
+{intro}{blurbs}
 <div class="credit">Play text: the Folger Shakespeare (ed. Barbara A. Mowat &amp; Paul Werstine), Folger Shakespeare Library, used under CC BY-NC 4.0.<br><br>
-Marginalia: transcribed from Melville's own annotated copy of <i>The Dramatic Works of William Shakespeare</i> (Boston: Hilliard, Gray, 1837), vol. {args.volume}, held at the Houghton Library, Harvard University (Sealts #{args.sealts}). Transcription &amp; digitization by Melville's Marginalia Online (dir. Steven Olsen-Smith, Boise State University), melvillesmarginalia.org.<br><br>
-Assembled as a private reading copy. Not a scholarly edition &mdash; footnote placement is approximate where Melville's 1837 text departs in wording from the modern edited text.</div>
-</div>
-<div class="textcol">"""]
+Melville: transcribed from his own annotated copy of <i>The Dramatic Works of William Shakespeare</i> (Boston: Hilliard, Gray, 1837), vol. {args.volume}, held at the Houghton Library, Harvard University (Sealts #{args.sealts}). Transcription &amp; digitization by Melville's Marginalia Online (dir. Steven Olsen-Smith, Boise State University), melvillesmarginalia.org.<br><br>
+{extra_sources}{caveat}</div>
+</div>"""]
+
+    # ---- frontispieces: whole pages a reader wrote facing the play, not line marks ----
+    for a in extra:
+        fp = a.get("frontispiece")
+        if not fp:
+            continue
+        verse = "<br>".join(html.escape(l) for l in fp["lines"])
+        out.append(f'<div class="frontispiece">'
+                   f'<div class="caption">{html.escape(fp["caption"])}</div>'
+                   f'<h2>{html.escape(fp["title"])}</h2>'
+                   f'<div class="verse">{verse}</div>'
+                   f'<div style="margin-top:2.4em;font-weight:bold;color:{a["color"]};">{a["key"]}</div>'
+                   f'</div>')
+
+    out.append('<div class="textcol">')
+
+    # Body line-height in units of the (smaller) sidenote font — how much vertical room
+    # one line of play text buys us before the next sidenote can start.
+    LINE_ADVANCE_EM = 2.0
+    last_note_bottom_em, last_note_line = 0.0, -999
 
     i, n = 0, len(play_lines)
     while i < n:
@@ -287,15 +440,53 @@ Assembled as a private reading copy. Not a scholarly edition &mdash; footnote pl
         text_html = f'<span class="underlined">{esc}</span>' if "underline" in vtypes else f'<span class="linetext">{esc}</span>'
         prefix = '<span class="checkmark"></span>' if "checkmark" in vtypes else ""
         line_html = f'<div class="{" ".join(classes)}">{prefix}{text_html}'
+        # Whose mark is this? With more than one reader in the book, a margin bar on its
+        # own is ambiguous, so every marked line trails the initials of who marked it.
+        if len(readers) > 1 and i in line_authors:
+            for k in line_authors[i]:
+                c = author_color.get(k)
+                sty = f' style="color:{c};"' if c else ""
+                line_html += f'<span class="linetag"{sty}>{k}</span>'
         if has_marginbar:
-            line_html += '<div class="marginbar"></div>'
-        for k, note in enumerate(line_sidenote.get(i, [])):
-            line_html += note_html(note, offset_em=k * 2.6)
+            bar_color = author_color.get(line_authors.get(i, ["HM"])[0])
+            sty = f' style="background:{bar_color};"' if bar_color else ""
+            line_html += f'<div class="marginbar"{sty}></div>'
+        # Sidenotes are absolutely positioned inside their own .line, so each one starts
+        # its stacking from top:0 and two notes on *nearby but different* lines can
+        # overlap. Carry the previous note's bottom edge forward, decayed by how far
+        # down the page we've moved since, and start below it.
+        notes = line_sidenote.get(i, [])
+        if notes:
+            decay = (i - last_note_line) * LINE_ADVANCE_EM
+            offset = max(0.0, last_note_bottom_em - decay)
+            for note in notes:
+                line_html += note_html(note, offset_em=round(offset, 2))
+                offset += est_note_height_em(note)
+            last_note_bottom_em, last_note_line = offset, i
         line_html += "</div>"
         out.append(line_html)
         i += 1
 
     out.append("</div>")
+
+    # ---- Notes on the Marks: the hand-located readers, listed with their citations ----
+    if extra:
+        out.append('<div class="notesheading">Notes on the Marks</div>')
+        key_line = " &nbsp;&nbsp; ".join(
+            f'<span style="font-weight:bold;{"color:" + c + ";" if c else ""}">{k}</span> {html.escape(n)}'
+            for k, n, c in readers)
+        out.append(f'<div class="noteslist" style="text-align:center;margin-bottom:1.4em;">{key_line}</div>')
+        out.append('<div class="noteslist">')
+        for a in extra:
+            for mk in a["marks"]:
+                cite = f' ({html.escape(mk["citation"])})' if mk.get("citation") else ""
+                out.append(f'<p><span class="tag" style="color:{a["color"]};">{a["key"]}</span>'
+                           f'{html.escape(mk.get("note", ""))}{cite}</p>')
+        out.append(f'<p style="margin-top:1.2em;">'
+                   f'<span class="tag">HM</span>Melville\'s {len(entries)} marks on '
+                   f'{html.escape(args.title)} are individually transcribed at melvillesmarginalia.org '
+                   f'and are not re-listed here &mdash; see the marked lines throughout.</p>')
+        out.append('</div>')
 
     if appendix_notes:
         out.append('<div class="actheading" style="font-size:16pt;">EDITOR\'S NOTES, AS MELVILLE READ THEM</div>')
