@@ -389,7 +389,7 @@ def main():
 <div class="sub">by William Shakespeare<br><br>{subtitle}<br>{names_block}</div>
 {'</div><div class="editionnote">' if extra else ''}
 {intro}{blurbs}
-<div class="credit">Play text: the Folger Shakespeare (ed. Barbara A. Mowat &amp; Paul Werstine), Folger Shakespeare Library, used under CC BY-NC 4.0.<br><br>
+<div class="credit">Play text: the Folger Shakespeare (ed. Barbara A. Mowat &amp; Paul Werstine), Folger Shakespeare Library, used under CC BY-NC 3.0.<br><br>
 Melville: transcribed from his own annotated copy of <i>The Dramatic Works of William Shakespeare</i> (Boston: Hilliard, Gray, 1837), vol. {args.volume}, held at the Houghton Library, Harvard University (Sealts #{args.sealts}). Transcription &amp; digitization by Melville's Marginalia Online (dir. Steven Olsen-Smith, Boise State University), melvillesmarginalia.org.<br><br>
 {extra_sources}{caveat}</div>
 </div>"""]

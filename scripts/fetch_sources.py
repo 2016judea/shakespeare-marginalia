@@ -3,7 +3,7 @@
 Download the two source files needed to build a Melville-annotated edition
 of a Shakespeare play:
   1. The marginalia volume's TEI-XML from Melville's Marginalia Online.
-  2. The play's plain text from Folger Digital Texts (CC BY-NC 4.0).
+  2. The play's plain text from Folger Digital Texts (CC BY-NC 3.0).
 
 Usage:
     python3 fetch_sources.py --doc-id 31 --folger-slug king-lear --outdir .
