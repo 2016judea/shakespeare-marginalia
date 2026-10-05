@@ -72,7 +72,7 @@ non-commercial personal use is the only use this was ever built for.
 
 1. Downloads a volume's marginalia data from Melville's Marginalia Online's public
    XML endpoint (live, not bundled — see [NOTICE.md](NOTICE.md)).
-2. Downloads the matching play's modern text from Folger Shakespeare (CC BY-NC 4.0).
+2. Downloads the matching play's modern text from Folger Shakespeare (CC BY-NC 3.0).
 3. Matches every mark to its line in the modern text — Melville's by fuzzy-matching
    the transcription, any other reader's by their declared anchor string.
 4. Renders a print-ready HTML/PDF: marks shown visually in place (an underline is an
@@ -183,7 +183,7 @@ latter, go to the source: [melvillesmarginalia.org](https://melvillesmarginalia.
 ## Licensing
 
 See [NOTICE.md](NOTICE.md) for the full breakdown. Short version: this repo's code
-is MIT; the play text is CC BY-NC 4.0 (so **non-commercial use only**, no exceptions);
+is MIT; the play text is CC BY-NC 3.0 (so **non-commercial use only**, no exceptions);
 the marginalia data has no declared open license and is fetched live rather than
 redistributed, per the source project's own citation policy. The Milton and Keats
 marks in `examples/` are descriptions and citations, not reproduced facsimiles.

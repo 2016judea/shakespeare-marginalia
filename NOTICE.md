@@ -6,7 +6,7 @@ from the source. Nothing from either project is checked into this repository.
 
 ## 1. Play text — Folger Shakespeare (Folger Shakespeare Library)
 
-Fetched from `shakespeare.folger.edu`, licensed **CC BY-NC 4.0** (Attribution,
+Fetched from `shakespeare.folger.edu`, licensed **CC BY-NC 3.0** (Attribution,
 NonCommercial). That means:
 
 - **Attribution required** — this repo credits Folger in every generated document's
