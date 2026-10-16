@@ -116,6 +116,29 @@ That produces the 124-page three-reader edition. Drop `--annotators` and you get
 Melville alone, at 121 pages — the multi-reader front matter and the per-line
 initials only appear when there's more than one hand to distinguish.
 
+### A public-domain base text (for anything sold)
+
+The Folger text is CC BY-NC, so an edition built on it can never be sold. For that,
+build on the MIT **Moby Shakespeare**, which its site places in the public domain, and
+leave Melville out until Melville's Marginalia Online grants reuse of its
+transcriptions (`--xml` is optional):
+
+```bash
+python3 scripts/fetch_moby.py --slug lear --title "King Lear" --out work/king-lear_moby.txt
+python3 scripts/render_annotated_play.py \
+  --play-text work/king-lear_moby.txt \
+  --text-credit "Play text: the Moby Shakespeare (shakespeare.mit.edu), placed in the public domain." \
+  --title "The Tragedy of King Lear" --style antiquarian \
+  --annotators examples/king-lear/annotators.json \
+  --out work/king_lear_course.html
+```
+
+Milton and Keats with no Melville, on the Moby text: 115 pages (2026-10-16). Every
+anchor in `annotators.json` resolves at 0.88 or better on both texts. Where the two
+editions print a line differently, an anchor can be a list of wordings and the best
+one wins (Keats's "Poor Tom!" is one line in the Folger and the tail of a longer line
+in Moby).
+
 Three built-in style presets: `antiquarian` (quiet, oxblood ink, hairline margin
 rule — closest to a real old-book page), `brutalist` (bold sans headers, thick
 vermilion margin bar, high-contrast), `modern_serif` (Hoefler Text, generous

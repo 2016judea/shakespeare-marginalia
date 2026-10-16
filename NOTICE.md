@@ -18,6 +18,14 @@ NonCommercial). That means:
 Citation: *The Folger Shakespeare*, ed. Barbara A. Mowat, Paul Werstine, Michael Poston,
 and Rebecca Niles. Folger Shakespeare Library. https://shakespeare.folger.edu.
 
+### 1a. Play text — the Moby Shakespeare (public domain)
+
+`scripts/fetch_moby.py` fetches the MIT Moby Shakespeare instead. Its site says: "The
+HTML versions of the plays provided here are placed in the public domain"
+(shakespeare.mit.edu, read 2026-10-16). An edition built on it carries no
+non-commercial restriction from the play text. *Added 2026-10-16, for the course
+edition sold at lear-in-the-margins.*
+
 ## 2. Marginalia data — Melville's Marginalia Online
 
 Fetched from `melvillesmarginalia.org`, directed by Steven Olsen-Smith (Boise State,

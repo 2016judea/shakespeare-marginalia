@@ -116,12 +116,19 @@ BARE_SPEAKER = BARE_SPEAKER_RE
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--xml", required=True, help="marginalia volume XML from fetch_sources.py")
-    ap.add_argument("--page-start", type=int, required=True)
-    ap.add_argument("--page-end", type=int, required=True)
-    ap.add_argument("--folger-text", required=True, help="the *_folger.txt from fetch_sources.py")
+    ap.add_argument("--xml", help="Melville's Marginalia Online volume XML from fetch_sources.py. "
+                                   "Omit it to build an edition without Melville (e.g. the paid edition, "
+                                   "until MMO grants reuse of its transcriptions)")
+    ap.add_argument("--page-start", type=int)
+    ap.add_argument("--page-end", type=int)
+    ap.add_argument("--folger-text", "--play-text", dest="folger_text", required=True,
+                    help="play text in Folger's plain-text shape: *_folger.txt from fetch_sources.py "
+                         "(CC BY-NC) or *_moby.txt from fetch_moby.py (public domain)")
+    ap.add_argument("--text-credit", default="Play text: the Folger Shakespeare (ed. Barbara A. Mowat &amp; "
+                    "Paul Werstine), Folger Shakespeare Library, used under CC BY-NC 3.0.",
+                    help="title-page credit for the play text (HTML). Must match --play-text")
     ap.add_argument("--title", required=True, help='e.g. "The Tragedy of King Lear"')
-    ap.add_argument("--volume", type=int, required=True, help="Vol. N of 7, for the credit line")
+    ap.add_argument("--volume", type=int, help="Vol. N of 7, for the Melville credit line")
     ap.add_argument("--sealts", default="460", help="Sealts number of the physical volume (460 for all 7 Dramatic Works vols)")
     ap.add_argument("--style", choices=STYLES.keys(), default="antiquarian")
     ap.add_argument("--overrides", help="JSON file of manual {\"page,y\": line_index} corrections")
@@ -130,6 +137,8 @@ def main():
                                           "examples/king-lear/annotators.json")
     ap.add_argument("--appendix-pages", nargs="*", type=int, default=[],
                      help="page numbers to treat as trailing editorial notes, not in-text anchors")
+    ap.add_argument("--colophon", help="HTML fragment printed as the book's last page (an edition's "
+                                        "licence terms, say)")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
@@ -141,9 +150,8 @@ def main():
             overrides[(int(page_s), int(y_s))] = v
 
     # ---------- parse marginalia ----------
-    tree = ET.parse(args.xml)
-    root = tree.getroot()
     entries = []
+    root = ET.parse(args.xml).getroot() if args.xml else ET.Element("none")
     for div in root.iter("div"):
         page = div.get("page")
         if not page:
@@ -160,8 +168,9 @@ def main():
             "text": div_text(div),
         })
     entries.sort(key=lambda e: (e["page"], e["y"]))
-    print(f"Loaded {len(entries)} Melville marks in pp.{args.page_start}-{args.page_end}")
-    if not entries:
+    if args.xml:
+        print(f"Loaded {len(entries)} Melville marks in pp.{args.page_start}-{args.page_end}")
+    if args.xml and not entries:
         raise SystemExit("No marks in this page range -- wrong play/volume, or Melville left it unmarked "
                           "(run list_plays.py first to check).")
 
@@ -205,7 +214,8 @@ def main():
             anchor = play_lines[m["start"]][:60] if m else "???"
             print(f"p.{e['page']:>3} y={e['y']:<5} [{e['type']:<10}] score={(m['score'] if m else 0):.2f} "
                   f"anchor='{anchor}' | note='{e['text'][:60]}'  <-- WEAK, check by hand")
-    print(f"\n{weak}/{len(entries)} weak matches -- add corrections to an --overrides JSON if needed, then rerun.\n")
+    if entries:
+        print(f"\n{weak}/{len(entries)} weak matches -- add corrections to an --overrides JSON if needed, then rerun.\n")
 
     # ---------- resolve line assignments ----------
     def bump_past_bare_speaker(idx):
@@ -231,7 +241,13 @@ def main():
     # text rather than by line index is deliberate: indices move whenever the Folger
     # text is re-fetched, and a hand-typed index that is off by N fails silently.
     def find_line(anchor):
-        """Best whole-text match for an anchor string. Returns (index, score)."""
+        """Best whole-text match for an anchor string. Returns (index, score).
+
+        `anchor` may be a list of alternative wordings of the same line, for when two
+        editions print it differently (the Folger breaks "Fathom and half ... / Poor Tom!"
+        over two lines; the Moby text keeps it on one). The best-scoring wording wins."""
+        if isinstance(anchor, list):
+            return max((find_line(a) for a in anchor), key=lambda r: r[1])
         target = norm(anchor)
         best_score, best_i = -1, None
         for start in range(len(play_lines)):
@@ -252,8 +268,9 @@ def main():
                 idx, score = find_line(mk["anchor"])
                 mk["_line"], mk["_score"] = idx, score
                 flag = "" if score >= 0.75 else "   <-- WEAK, check the rendered page by hand"
+                shown = mk["anchor"] if isinstance(mk["anchor"], str) else " | ".join(mk["anchor"])
                 print(f"{a['key']} score={score:.2f} line={idx:<5} "
-                      f"anchor='{mk['anchor'][:48]}'{flag}")
+                      f"anchor='{shown[:48]}' -> '{play_lines[idx].strip()[:48]}'{flag}")
             print(f"Loaded {len(a['marks'])} {a['name']} marks")
 
     for e, m in zip(entries, matches):
@@ -324,13 +341,20 @@ def main():
     act_re = re.compile(r"^ACT (\d+)$")
     scene_re = re.compile(r"^Scene (\d+)$")
 
+    melville_credit = (f"Melville: transcribed from his own annotated copy of <i>The Dramatic Works of William "
+                       f"Shakespeare</i> (Boston: Hilliard, Gray, 1837), vol. {args.volume}, held at the Houghton "
+                       f"Library, Harvard University (Sealts #{args.sealts}). Transcription &amp; digitization by "
+                       f"Melville's Marginalia Online (dir. Steven Olsen-Smith, Boise State University), "
+                       f"melvillesmarginalia.org.<br><br>") if entries else ""
+
     # ---- title page ----
-    readers = [("HM", "Herman Melville", None)] + [(a["key"], a["name"], a["color"]) for a in extra]
+    readers = ([("HM", "Herman Melville", None)] if entries else []) + [(a["key"], a["name"], a["color"]) for a in extra]
     author_color = {a["key"]: a["color"] for a in extra}   # HM keeps the style's own accent
     names_block = "<br>".join(n.upper() for _, n, _ in readers)
     subtitle = "with the marginalia of" if len(readers) == 1 else "with the marginalia of"
 
-    if extra:
+    multi = len(readers) > 1
+    if multi:
         key_line = " &nbsp; ".join(
             f'<span style="font-weight:bold;{"color:" + c + ";" if c else ""}">{k}</span> &middot; {html.escape(n)}'
             for k, n, c in readers)
@@ -340,17 +364,19 @@ def main():
                  f'This edition reads {html.escape(args.title)} once, straight through, with every hand '
                  f'visible at the lines that held them &mdash; each tagged so you always know whose.</div>')
         blurbs = ('<div class="blurbs">'
-                  '<p><b>HM</b> &mdash; Herman Melville marked his own 1837 <i>Dramatic Works</i> '
-                  'obsessively while drafting <i>Moby-Dick</i>; the volume survives at Harvard\'s '
-                  'Houghton Library, transcribed in full by Melville\'s Marginalia Online.</p>'
+                  + ('<p><b>HM</b> &mdash; Herman Melville marked his own 1837 <i>Dramatic Works</i> '
+                     'obsessively while drafting <i>Moby-Dick</i>; the volume survives at Harvard\'s '
+                     'Houghton Library, transcribed in full by Melville\'s Marginalia Online.</p>' if entries else "")
                   + "".join(f'<p><b>{a["key"]}</b> &mdash; {html.escape(a["blurb"])}</p>' for a in extra)
                   + '</div>')
         extra_sources = "".join(
             f'{html.escape(a["name"])}: {html.escape(a["source"])}<br><br>' for a in extra)
-        caveat = ("Assembled as a private reading copy, not a scholarly edition. Melville's marks are "
-                  "exhaustively transcribed by his editors; the others are a first pass, not a complete "
-                  "paleographic inventory. Footnote placement is approximate where a reader's own edition "
-                  "departs in wording from the modern edited text.")
+        caveat = (("Assembled as a private reading copy, not a scholarly edition. Melville's marks are "
+                   "exhaustively transcribed by his editors; the others are a first pass, not a complete "
+                   "paleographic inventory. ") if entries else
+                  ("A reading edition, not a scholarly one: the marks here are a first pass, not a complete "
+                   "paleographic inventory. ")) + ("Footnote placement is approximate where a reader's own "
+                                                 "edition departs in wording from the modern edited text.")
         # A multi-reader title page carries a key, an intro and a blurb per reader, which
         # is far more than the single-reader page was spaced for -- without this it pushes
         # the credit block onto a second page.
@@ -387,11 +413,10 @@ def main():
 <div class="titlepage">
 <h1>{html.escape(args.title).upper()}</h1>
 <div class="sub">by William Shakespeare<br><br>{subtitle}<br>{names_block}</div>
-{'</div><div class="editionnote">' if extra else ''}
+{'</div><div class="editionnote">' if multi else ''}
 {intro}{blurbs}
-<div class="credit">Play text: the Folger Shakespeare (ed. Barbara A. Mowat &amp; Paul Werstine), Folger Shakespeare Library, used under CC BY-NC 3.0.<br><br>
-Melville: transcribed from his own annotated copy of <i>The Dramatic Works of William Shakespeare</i> (Boston: Hilliard, Gray, 1837), vol. {args.volume}, held at the Houghton Library, Harvard University (Sealts #{args.sealts}). Transcription &amp; digitization by Melville's Marginalia Online (dir. Steven Olsen-Smith, Boise State University), melvillesmarginalia.org.<br><br>
-{extra_sources}{caveat}</div>
+<div class="credit">{args.text_credit}<br><br>
+{melville_credit}{extra_sources}{caveat}</div>
 </div>"""]
 
     # ---- frontispieces: whole pages a reader wrote facing the play, not line marks ----
@@ -463,6 +488,17 @@ Melville: transcribed from his own annotated copy of <i>The Dramatic Works of Wi
                 line_html += note_html(note, offset_em=round(offset, 2))
                 offset += est_note_height_em(note)
             last_note_bottom_em, last_note_line = offset, i
+            # A sidenote is absolutely positioned, so it takes no room in the flow and a
+            # line near the foot of a page printed its note straight off the paper (Keats's
+            # "Poor Tom", p. 61 of the 2026-10-16 course edition). Reserve the note's height
+            # as padding the line may not break inside, then hand the room back to the
+            # following lines with an equal negative margin. Sidenote em -> body em is the
+            # font-size ratio, about 9pt / 11.5pt.
+            pad = round(offset * 0.8, 2)
+            line_html = line_html.replace(
+                f'<div class="{" ".join(classes)}">',
+                f'<div class="{" ".join(classes)}" style="break-inside:avoid;padding-bottom:{pad}em;'
+                f'margin-bottom:-{pad}em;background-clip:content-box;">', 1)
         line_html += "</div>"
         out.append(line_html)
         i += 1
@@ -482,7 +518,8 @@ Melville: transcribed from his own annotated copy of <i>The Dramatic Works of Wi
                 cite = f' ({html.escape(mk["citation"])})' if mk.get("citation") else ""
                 out.append(f'<p><span class="tag" style="color:{a["color"]};">{a["key"]}</span>'
                            f'{html.escape(mk.get("note", ""))}{cite}</p>')
-        out.append(f'<p style="margin-top:1.2em;">'
+        if entries:
+            out.append(f'<p style="margin-top:1.2em;">'
                    f'<span class="tag">HM</span>Melville\'s {len(entries)} marks on '
                    f'{html.escape(args.title)} are individually transcribed at melvillesmarginalia.org '
                    f'and are not re-listed here &mdash; see the marked lines throughout.</p>')
@@ -497,6 +534,10 @@ Melville: transcribed from his own annotated copy of <i>The Dramatic Works of Wi
             out.append(f'<div style="width:4.4in;font-family:Helvetica,Arial,sans-serif;font-size:9.5pt;'
                        f'color:#7a1010;border-left:2px solid #7a1010;padding:0.3em 0 0.3em 0.6em;margin-bottom:0.6em;">'
                        f'<b>HM</b> [{note["type"]}]: &ldquo;{html.escape(note["text"])}&rdquo;</div>')
+
+    if args.colophon:
+        out.append('<div class="notesheading">Colophon</div><div class="noteslist">'
+                   + open(args.colophon, encoding="utf-8").read() + '</div>')
 
     out.append("</body></html>")
     open(args.out, "w", encoding="utf-8").write("\n".join(out))

@@ -76,7 +76,7 @@
       },
       "marks": [
         {
-          "anchor": "Poor Tom!",
+          "anchor": ["Poor Tom!", "[Within]  Fathom and half, fathom and half! Poor Tom!"],
           "type": "annotation",
           "note": "Keats circled the words “Poor Tom” here and wrote beside them: “Sunday evening, Oct. 4, 1818.” His younger brother Tom, whom he was nursing through the tuberculosis that would kill him eight weeks later, was the reason. He did not write anything else — just the date, next to the name.",
           "citation": "Spurgeon 1928"
