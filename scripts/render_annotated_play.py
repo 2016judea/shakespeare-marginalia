@@ -226,6 +226,7 @@ def main():
     line_visual = {}
     line_sidenote = {}
     line_authors = {}   # line index -> ordered list of annotator keys who marked it
+    line_type_by = {}   # (line index, mark type) -> the hand-located reader who made that mark
     appendix_notes = []
 
     def claim(idx, key):
@@ -310,8 +311,16 @@ def main():
             if idx is None:
                 continue
             idx = bump_past_bare_speaker(idx)
-            line_visual.setdefault(idx, set()).add(mk["type"])
-            claim(idx, a["key"])
+            # `span`: a bracket or an underline that runs over N spoken lines, counted
+            # from the anchor and skipping the blank lines between speeches.
+            li, left = idx, max(1, int(mk.get("span", 1)))
+            while li < len(play_lines) and left:
+                if play_lines[li].strip():
+                    line_visual.setdefault(li, set()).add(mk["type"])
+                    line_type_by.setdefault((li, mk["type"]), a["key"])
+                    claim(li, a["key"])
+                    left -= 1
+                li += 1
             if mk.get("note"):
                 line_sidenote.setdefault(idx, []).append({
                     "tag": a["key"], "color": a["color"],
@@ -335,8 +344,13 @@ def main():
 
     def est_note_height_em(e):
         """Rough rendered height of a sidenote, in em, for collision carry-over."""
-        chars = len(e["text"]) + (len(e.get("citation") or "") + 3)
-        return max(2.6, (chars / 42.0) * 1.4 + 0.8)
+        # The citation is nowrap, so it often starts a line of its own: count it as
+        # ending a line, and budget ~36 italic characters to the 2.2in column. The old
+        # 42-per-line guess let Hamlet's willow notes overprint each other (2026-10-16).
+        lines = -(-(len(e["text"]) + 2) // 36)
+        if e.get("citation"):
+            lines += 1 if (len(e["text"]) % 36) + len(e["citation"]) + 3 > 36 else 0
+        return max(2.6, lines * 1.4 + 0.6)
 
     act_re = re.compile(r"^ACT (\d+)$")
     scene_re = re.compile(r"^Scene (\d+)$")
@@ -462,7 +476,11 @@ def main():
             classes.append("marked-annotation")
         has_marginbar = bool(vtypes & MARGIN_TYPES)
         esc = html.escape(raw)
-        text_html = f'<span class="underlined">{esc}</span>' if "underline" in vtypes else f'<span class="linetext">{esc}</span>'
+        # A hand-located reader's underline and margin bar are drawn in that reader's own
+        # colour; Melville's keep the style's accent. Two readers on one line stay distinct.
+        ul_c = author_color.get(line_type_by.get((i, "underline")))
+        ul_sty = f' style="text-decoration-color:{ul_c};"' if ul_c else ""
+        text_html = f'<span class="underlined"{ul_sty}>{esc}</span>' if "underline" in vtypes else f'<span class="linetext">{esc}</span>'
         prefix = '<span class="checkmark"></span>' if "checkmark" in vtypes else ""
         line_html = f'<div class="{" ".join(classes)}">{prefix}{text_html}'
         # Whose mark is this? With more than one reader in the book, a margin bar on its
@@ -473,7 +491,8 @@ def main():
                 sty = f' style="color:{c};"' if c else ""
                 line_html += f'<span class="linetag"{sty}>{k}</span>'
         if has_marginbar:
-            bar_color = author_color.get(line_authors.get(i, ["HM"])[0])
+            bar_by = next((line_type_by[(i, t)] for t in sorted(vtypes & MARGIN_TYPES) if (i, t) in line_type_by), None)
+            bar_color = author_color.get(bar_by or line_authors.get(i, ["HM"])[0])
             sty = f' style="background:{bar_color};"' if bar_color else ""
             line_html += f'<div class="marginbar"{sty}></div>'
         # Sidenotes are absolutely positioned inside their own .line, so each one starts
